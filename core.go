@@ -1,10 +1,11 @@
 package artichoke
 
 import (
-	"fmt"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/http"
+	"path"
 	"strconv"
 )
 
@@ -54,8 +55,8 @@ type Server struct {
 	middleware []Middleware
 	l          net.Listener
 	// for TLS connections
-	certFile   string
-	keyFile   string
+	certFile string
+	keyFile  string
 }
 
 var server Server
@@ -77,11 +78,44 @@ func (s *Server) Use(fns ...Middleware) {
 	s.middleware = append(s.middleware, fns...)
 }
 
+func cleanPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if p[0] != '/' {
+		p = "/" + p
+	}
+	np := path.Clean(p)
+	// path.Clean removes trailing slash except for root;
+	// put the trailing slash back if necessary.
+	if p[len(p)-1] == '/' && np != "/" {
+		np += "/"
+	}
+	return np
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "CONNECT" {
+		p := cleanPath(r.URL.Path)
+		if p != r.URL.Path {
+			if "/"+p == r.URL.Path {
+				// fixup path
+				r.URL.Path = p
+			} else {
+				// return 301
+				url := *r.URL
+				url.Path = p
+				h := http.RedirectHandler(url.String(), http.StatusMovedPermanently)
+				h.ServeHTTP(w, r)
+				return
+			}
+		}
+	}
+
 	data := new(data)
 	data.raw = make(map[string]interface{})
 
-	for _, fn := range(s.middleware) {
+	for _, fn := range s.middleware {
 		if fn(w, r, data) == true {
 			return
 		}
